@@ -1,0 +1,105 @@
+// replace your makeTemplate58 with this lighter version
+async function makeTemplate58(args = {}) {
+  const {
+    outFile = 'CLINICAL_INTENT.xlsx',
+    sheetName = 'CAT Automated',
+    headers = DEFAULT_HEADERS,
+    top = {
+      numberingRow: true,
+      row5Labels: /* keep as-is */ [],
+      row6Defaults: Array(headers.length).fill('')
+    },
+    freeze = { row: 10, col: 2 },
+    rows = []
+  } = args;
+
+  const wb = await XlsxPopulate.fromBlankAsync();
+  const ws = wb.addSheet(sheetName);
+  const defaultSheet = wb.sheet('Sheet1');
+  if (defaultSheet) wb.deleteSheet(defaultSheet.name());
+
+  // Keep default Excel font (smaller files). Set col widths only.
+  headers.forEach((h, i) => ws.column(i + 1).width(h.width || 18));
+
+  const numberingRowIdx = 4;
+  const labelsRowIdx = 5;
+  const defaultsRowIdx = 6;
+  const blackHeaderRowIdx = 9;
+  const firstDataRow = blackHeaderRowIdx + 1;
+
+  // numbering
+  if (top.numberingRow) {
+    headers.forEach((_, i) => ws.cell(numberingRowIdx, i + 1).value(i + 1));
+    ws.range(numberingRowIdx, 1, numberingRowIdx, headers.length)
+      .style({ horizontalAlignment: 'center', fill: 'E2F0D9', border: true });
+  }
+
+  // row 5 labels (green band)
+  if (Array.isArray(top.row5Labels) && top.row5Labels.length) {
+    top.row5Labels.forEach((t, i) => ws.cell(labelsRowIdx, i + 1).value(t));
+    ws.range(labelsRowIdx, 1, labelsRowIdx, headers.length)
+      .style({ bold: true, fill: 'C6E0B4', border: true, horizontalAlignment: 'center', wrapText: true });
+  }
+
+  // row 6 defaults
+  if (Array.isArray(top.row6Defaults) && top.row6Defaults.length) {
+    top.row6Defaults.forEach((v, i) => ws.cell(defaultsRowIdx, i + 1).value(v));
+    ws.range(defaultsRowIdx, 1, defaultsRowIdx, headers.length)
+      .style({ fill: 'F2F9EE', border: true });
+  }
+
+  // black header row
+  headers.forEach((h, i) => ws.cell(blackHeaderRowIdx, i + 1).value(h.name));
+  ws.range(blackHeaderRowIdx, 1, blackHeaderRowIdx, headers.length)
+    .style({ bold: true, fill: '000000', fontColor: 'FFFFFF', border: true, wrapText: true });
+
+  // freeze panes under header
+  ws.freezePanes(freeze.row || firstDataRow, freeze.col || 2);
+
+  // ---- IMPORTANT: shrink formatting/validation to a small buffer
+  const writeCount = Math.max(rows.length, 1);
+  const buffer = 20; // small safety margin
+  const lastDataRow = firstDataRow + writeCount + buffer - 1;
+
+  // Date formats by column (apply at column-level to avoid many cell records)
+  const DATE_NAMES = ['Effective Date','Thru Date','CT Effective Date','CT Thru Date'].map(s => s.toLowerCase());
+  headers.forEach((h, i) => {
+    if (DATE_NAMES.includes(String(h.name).toLowerCase())) {
+      ws.column(i + 1).style('numberFormat', 'mm/dd/yyyy');
+    }
+  });
+
+  // Minimal grid borders ONLY on the rows we’re writing (+ a little buffer if you want)
+  ws.range(firstDataRow, 1, lastDataRow, headers.length).style({ border: true });
+
+  // Validations: add only where needed, and only for a short range
+  const addListValidation = (colIdx, values) => {
+    ws.range(firstDataRow, colIdx, lastDataRow, colIdx).dataValidation({
+      type: 'list', allowBlank: true, formula1: `"${values.join(',')}"`
+    });
+  };
+
+  // Example validations you had before (edit these as needed)
+  const findCol = (name) => headers.findIndex(h => h.name === name) + 1;
+  const editTypeCol = findCol('Edit Type');
+  if (editTypeCol) addListValidation(editTypeCol, ['ADD','MODIFY','INVALID','DELETE']);
+
+  const productTypeCol = findCol('Product Type\n(NDC, GPI)');
+  if (productTypeCol) addListValidation(productTypeCol, ['NDC','GPI']);
+
+  // Optional initial rows
+  rows.forEach((rowObj, idx) => {
+    const r = firstDataRow + idx;
+    headers.forEach((h, i) => {
+      if (Object.prototype.hasOwnProperty.call(rowObj, h.name)) {
+        ws.cell(r, i + 1).value(rowObj[h.name]);
+      }
+    });
+  });
+
+  const outDir = path.join(process.cwd(), 'cypress', 'downloads');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, outFile);
+  await wb.toFileAsync(outPath);
+  return { fileName: outFile, fullPath: outPath };
+}
